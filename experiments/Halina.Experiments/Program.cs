@@ -11,6 +11,7 @@ using System.Runtime.Serialization;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 
 namespace Halina.Experiments;
 
@@ -593,25 +594,32 @@ public class Program
             lock (_sync)
             {
                 _files.Clear();
-                foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+                if (Directory.Exists(directory))
                 {
-                    _files.Add(Path.GetFileName(file));
-                    //Console.WriteLine($"Cached existing file: {Path.GetFileName(file)}");
+                    foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+                    {
+                        _files.Add(Normalize(Path.GetFileName(file)));
+                    }
                 }
             }
         }
 
         public bool ContainsPattern(string pattern)
         {
-        return _files.Contains(pattern);
+            return _files.Contains(Normalize(pattern));
         }
 
         public void Add(string filePath)
         {
             lock (_sync)
             {
-                _files.Add(Path.GetFileName(filePath));
+                _files.Add(Normalize(Path.GetFileName(filePath)));
             }
+        }
+
+        private static string Normalize(string filename)
+        {
+            return Regex.Replace(filename, @"_tbl=\d+_", "_tbl=0_");
         }
     }
 
