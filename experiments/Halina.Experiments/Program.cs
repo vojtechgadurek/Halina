@@ -8,6 +8,8 @@ using Halina.Experiments;
 using System.Linq;
 using System.Runtime.Serialization;
 using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Halina.Experiments;
 
@@ -112,11 +114,25 @@ public class Program
         }
 
         string mode = args[0].ToLower();
-        string? configPath = args.Length > 1 ? args[1] : null;
+        string? configPath = null;
+        bool useParallel = false;
+        for (int i = 1; i < args.Length; i++)
+        {
+            if (args[i].Equals("--parallel", StringComparison.OrdinalIgnoreCase))
+            {
+                useParallel = true;
+                continue;
+            }
+
+            if (configPath == null)
+            {
+                configPath = args[i];
+            }
+        }
 
         if (mode == "kmer")
         {
-            RunKmerExperiments(configPath);
+            RunKmerExperiments(configPath, useParallel);
         }
         else if (mode == "mutation")
         {
@@ -124,7 +140,7 @@ public class Program
         }
         else if (mode == "hashset-extended")
         {
-            RunHashSetPredictorExtended(configPath);
+            RunHashSetPredictorExtended(configPath, useParallel);
         }
         else
         {
@@ -132,7 +148,7 @@ public class Program
         }
     }
 
-    private static void RunKmerExperiments(string? configPath)
+    private static void RunKmerExperiments(string? configPath, bool useParallel)
     {
         KmerExperimentConfig config;
         if (configPath != null && File.Exists(configPath))
@@ -151,35 +167,8 @@ public class Program
         }
 
         Directory.CreateDirectory(config.Path);
-        int count = 0;
-        foreach (var seed in config.Seed.Values())
-        foreach (var l in config.L.Values())
-        foreach (var k in config.K.Values())
-        foreach (var kmerLen in config.KmerLength.Values())
-        foreach (var nSeq in config.NSequences.Values())
-        foreach (var seqLen in config.SequenceLength.Values())
-        foreach (var distance in config.MaxDistance.Values())
-        {
-            var pattern = BuildKmerCachePattern(k, l, kmerLen, nSeq, seqLen, seed, distance);
-            if (ResultAlreadyCached(config.Path, pattern))
-            {
-                Console.WriteLine("Skipping run because cached result already exists.");
-                continue;
-            }
-            Console.WriteLine($"Running Kmer Experiment: Seed={seed}, L={l}, K={k}, Kmer={kmerLen}, NSeq={nSeq}, SeqLen={seqLen}, MaxDistance={distance}");
-            try 
-            {
-                var result = KmerExperiments.RunExperiment(kmerLen, nSeq, seqLen, k, l, seed, distance);
-                Console.WriteLine($"Experiment finished in {result.Result.DurationMs:F2} ms (Gen: {result.Result.DataGenerationDurationMs:F2} ms)");
-                SaveResult(result, config.Path);
-                count++;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error: {ex.Message}");
-            }
-        }
-        Console.WriteLine($"Completed {count} experiments.");
+        var specs = BuildKmerExperimentSpecs(config);
+        ExecuteKmerExperiments(specs, config, useParallel);
     }
 
     private static void RunMutationExperiments(string? configPath)
@@ -220,7 +209,7 @@ public class Program
         Console.WriteLine($"Completed {count} experiments.");
     }
 
-    private static void RunHashSetPredictorExtended(string? configPath)
+    private static void RunHashSetPredictorExtended(string? configPath, bool useParallel)
     {
         HashSetExtendedConfig config;
         if (configPath != null && File.Exists(configPath))
@@ -239,37 +228,8 @@ public class Program
         }
 
         Directory.CreateDirectory(config.Path);
-        int count = 0;
-        foreach (var seed in config.Seed.Values())
-        foreach (var l in config.L.Values())
-        foreach (var k in config.K.Values())
-        foreach (var kmerLen in config.KmerLength.Values())
-        foreach (var nSeq in config.NSequences.Values())
-        foreach (var seqLen in config.SequenceLength.Values())
-        foreach (var stages in config.SamplingStages.Values())
-        foreach (var maxDistance in config.MaxDistance.Values())
-        {
-            var prefix = BuildExtendedResultPrefix(k, l, kmerLen, nSeq, seqLen, stages, config.ShrinkFactor, maxDistance);
-            var pattern = BuildExtendedCachePattern(prefix, seed);
-            if (ResultAlreadyCached(config.Path, pattern))
-            {
-                Console.WriteLine("Skipping run because cached result already exists.");
-                continue;
-            }
-            Console.WriteLine($"Running extended HashSet predictor: Seed={seed}, L={l}, K={k}, Kmer={kmerLen}, NSeq={nSeq}, SeqLen={seqLen}, Stages={stages}, MaxDistance={maxDistance}");
-            try
-            {
-                var result = HashSetPredictorExtended.Run(kmerLen, nSeq, seqLen, k, l, stages, config.ShrinkFactor, seed, maxDistance);
-                Console.WriteLine($"Experiment finished in {result.Result.DurationMs:F2} ms (Gen: {result.Result.DataGenerationDurationMs:F2} ms)");
-                SaveExtendedResult(result, config.Path);
-                count++;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error: {ex.Message}");
-            }
-        }
-        Console.WriteLine($"Completed {count} experiments.");
+        var specs = BuildExtendedExperimentSpecs(config);
+        ExecuteHashSetExtendedExperiments(specs, config, useParallel);
     }
 
     private static void SaveResult(ExperimentResult result, string saveDirectory)
@@ -300,6 +260,145 @@ public class Program
         string json = JsonSerializer.Serialize(result, options);
         File.WriteAllText(filename, json);
         Console.WriteLine($"Saved result to {filename}");
+    }
+
+    private record struct KmerExperimentSpec(int Seed, int L, int K, int KmerLength, int NSequences, int SequenceLength, int MaxDistance);
+    private record struct HashSetExtendedSpec(int Seed, int L, int K, int KmerLength, int NSequences, int SequenceLength, int SamplingStages, double ShrinkFactor, int MaxDistance);
+
+    private static IEnumerable<KmerExperimentSpec> BuildKmerExperimentSpecs(KmerExperimentConfig config)
+    {
+        var specs = new List<KmerExperimentSpec>();
+        foreach (var seed in config.Seed.Values())
+        foreach (var l in config.L.Values())
+        foreach (var k in config.K.Values())
+        foreach (var kmerLen in config.KmerLength.Values())
+        foreach (var nSeq in config.NSequences.Values())
+        foreach (var seqLen in config.SequenceLength.Values())
+        foreach (var distance in config.MaxDistance.Values())
+        {
+            specs.Add(new(seed, l, k, kmerLen, nSeq, seqLen, distance));
+        }
+
+        return specs;
+    }
+
+    private static void ExecuteKmerExperiments(IEnumerable<KmerExperimentSpec> specs, KmerExperimentConfig config, bool useParallel)
+    {
+        int completed = 0;
+        Action<KmerExperimentSpec> work = spec =>
+        {
+            if (ProcessKmerExperiment(spec, config))
+            {
+                Interlocked.Increment(ref completed);
+            }
+        };
+
+        if (useParallel)
+        {
+            Parallel.ForEach(specs, work);
+        }
+        else
+        {
+            foreach (var spec in specs)
+            {
+                work(spec);
+            }
+        }
+
+        Console.WriteLine($"Completed {completed} experiments.");
+    }
+
+    private static bool ProcessKmerExperiment(KmerExperimentSpec spec, KmerExperimentConfig config)
+    {
+        var pattern = BuildKmerCachePattern(spec.K, spec.L, spec.KmerLength, spec.NSequences, spec.SequenceLength, spec.Seed, spec.MaxDistance);
+        if (ResultAlreadyCached(config.Path, pattern))
+        {
+            Console.WriteLine("Skipping run because cached result already exists.");
+            return false;
+        }
+
+        Console.WriteLine($"Running Kmer Experiment: Seed={spec.Seed}, L={spec.L}, K={spec.K}, Kmer={spec.KmerLength}, NSeq={spec.NSequences}, SeqLen={spec.SequenceLength}, MaxDistance={spec.MaxDistance}");
+        try
+        {
+            var result = KmerExperiments.RunExperiment(spec.KmerLength, spec.NSequences, spec.SequenceLength, spec.K, spec.L, spec.Seed, spec.MaxDistance);
+            Console.WriteLine($"Experiment finished in {result.Result.DurationMs:F2} ms (Gen: {result.Result.DataGenerationDurationMs:F2} ms)");
+            SaveResult(result, config.Path);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static IEnumerable<HashSetExtendedSpec> BuildExtendedExperimentSpecs(HashSetExtendedConfig config)
+    {
+        var specs = new List<HashSetExtendedSpec>();
+        foreach (var seed in config.Seed.Values())
+        foreach (var l in config.L.Values())
+        foreach (var k in config.K.Values())
+        foreach (var kmerLen in config.KmerLength.Values())
+        foreach (var nSeq in config.NSequences.Values())
+        foreach (var seqLen in config.SequenceLength.Values())
+        foreach (var stages in config.SamplingStages.Values())
+        foreach (var maxDistance in config.MaxDistance.Values())
+        {
+            specs.Add(new(seed, l, k, kmerLen, nSeq, seqLen, stages, config.ShrinkFactor, maxDistance));
+        }
+
+        return specs;
+    }
+
+    private static void ExecuteHashSetExtendedExperiments(IEnumerable<HashSetExtendedSpec> specs, HashSetExtendedConfig config, bool useParallel)
+    {
+        int completed = 0;
+        Action<HashSetExtendedSpec> work = spec =>
+        {
+            if (ProcessHashSetExtendedSpec(spec, config))
+            {
+                Interlocked.Increment(ref completed);
+            }
+        };
+
+        if (useParallel)
+        {
+            Parallel.ForEach(specs, work);
+        }
+        else
+        {
+            foreach (var spec in specs)
+            {
+                work(spec);
+            }
+        }
+
+        Console.WriteLine($"Completed {completed} experiments.");
+    }
+
+    private static bool ProcessHashSetExtendedSpec(HashSetExtendedSpec spec, HashSetExtendedConfig config)
+    {
+        var prefix = BuildExtendedResultPrefix(spec.K, spec.L, spec.KmerLength, spec.NSequences, spec.SequenceLength, spec.SamplingStages, spec.ShrinkFactor, spec.MaxDistance);
+        var pattern = BuildExtendedCachePattern(prefix, spec.Seed);
+        if (ResultAlreadyCached(config.Path, pattern))
+        {
+            Console.WriteLine("Skipping run because cached result already exists.");
+            return false;
+        }
+
+        Console.WriteLine($"Running extended HashSet predictor: Seed={spec.Seed}, L={spec.L}, K={spec.K}, Kmer={spec.KmerLength}, NSeq={spec.NSequences}, SeqLen={spec.SequenceLength}, Stages={spec.SamplingStages}, MaxDistance={spec.MaxDistance}");
+        try
+        {
+            var result = HashSetPredictorExtended.Run(spec.KmerLength, spec.NSequences, spec.SequenceLength, spec.K, spec.L, spec.SamplingStages, spec.ShrinkFactor, spec.Seed, spec.MaxDistance);
+            Console.WriteLine($"Experiment finished in {result.Result.DurationMs:F2} ms (Gen: {result.Result.DataGenerationDurationMs:F2} ms)");
+            SaveExtendedResult(result, config.Path);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error: {ex.Message}");
+            return false;
+        }
     }
 
     private static string BuildKmerCachePattern(int k, int l, int kmerLen, int nSeq, int seqLen, int seed, int maxDistance)
