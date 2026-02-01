@@ -447,7 +447,7 @@ public class Program
     private static string BuildKmerCachePattern(int k, int l, int kmerLen, int nSeq, int seqLen, int seed, int maxDistance)
     {
         // Table size is always deterministic (seqLen * kmerLen), so omit it from the glob pattern.
-        return $"v=v1_k={k}_l={l}_kmer={kmerLen}_nseq={nSeq}_len={seqLen}_seed={seed}_maxdist={maxDistance}.json";
+        return $"v=v1_k={k}_l={l}_kmer={kmerLen}_nseq={nSeq}_len={seqLen}_tbl={ (1 + seqLen) *nSeq}_seed={seed}_maxdist={maxDistance}.json";
     }
 
     private static string BuildExtendedResultPrefix(int k, int l, int kmerLen, int nSeq, int seqLen, int stages, double shrinkFactor, int maxDistance)
@@ -463,7 +463,7 @@ public class Program
 
     private static bool ResultAlreadyCached(string saveDirectory, string searchPattern)
     {
-        Directory.CreateDirectory(saveDirectory);
+        //Console.WriteLine($"Checking cache for pattern: {searchPattern}");
         return GetDirectoryCache(saveDirectory).ContainsPattern(searchPattern);
     }
 
@@ -507,6 +507,7 @@ public class Program
                 foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
                 {
                     _files.Add(Path.GetFileName(file));
+                    //Console.WriteLine($"Cached existing file: {Path.GetFileName(file)}");
                 }
             }
         }
