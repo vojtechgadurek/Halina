@@ -308,15 +308,15 @@ public class Program
 
         var lines = new List<string>
         {
-            "K,L,AvgSuccessRate,VarianceSuccessRate,AvgDurationMs,VarianceDurationMs,SampleCount,Ratio"
+            "K,L,AvgSuccessRate,VarianceSuccessRate,AvgDurationMs,VarianceDurationMs,SampleCount,Ratio,AvgRecoveryFraction,VarianceRecoveryFraction"
         };
 
         foreach (var entry in statsByPair.OrderBy(e => e.Key.K).ThenBy(e => e.Key.L))
         {
             var (k, l) = entry.Key;
             var stats = entry.Value;
-            double ratio = (double)(1.0 / k * 1.5 + 1.0 / l);
-            lines.Add($"{k},{l},{stats.AverageSuccessRate:0.0000},{stats.VarianceSuccessRate:0.0000},{stats.AverageDuration:0.000},{stats.VarianceDuration:0.000},{stats.Count},{ratio:0.000000}");
+            double ratio = (double)(k * 1.5 + l) / Math.Max(1, stats.Count);
+            lines.Add($"{k},{l},{stats.AverageSuccessRate:0.0000},{stats.VarianceSuccessRate:0.0000},{stats.AverageDuration:0.000},{stats.VarianceDuration:0.000},{stats.Count},{ratio:0.000000},{stats.AverageRecoveryFraction:0.0000},{stats.VarianceRecoveryFraction:0.0000}");
         }
 
         string resolvedOutput = string.IsNullOrWhiteSpace(outputFilePath)
@@ -331,42 +331,6 @@ public class Program
 
         File.WriteAllLines(resolvedOutput, lines);
         Console.WriteLine($"Saved analysis to {resolvedOutput}");
-    }
-
-    private static void WriteRelativeSizeCsv(string directory, IEnumerable<ExtendedExperimentResult> extendedExperiments)
-    {
-        var lines = new List<string>
-        {
-            "Version,Seed,K,L,KmerSize,NSequences,SequenceLength,SamplingStages,ShrinkFactor,TableRole,EquationValue,ElementsEncoded,Ratio"
-        };
-
-        foreach (var experiment in extendedExperiments)
-        {
-            double equationValue = experiment.Arguments.K * 1.5 + experiment.Arguments.L;
-            int encodedElements = Math.Max(1, experiment.Arguments.TableSize);
-            string ratioText = (equationValue / encodedElements).ToString("0.000000", CultureInfo.InvariantCulture);
-            string commonPrefix = string.Join(",",
-                experiment.Version,
-                experiment.Arguments.Seed.ToString(CultureInfo.InvariantCulture),
-                experiment.Arguments.K.ToString(CultureInfo.InvariantCulture),
-                experiment.Arguments.L.ToString(CultureInfo.InvariantCulture),
-                experiment.Arguments.KmerSize.ToString(CultureInfo.InvariantCulture),
-                experiment.Arguments.NSequences.ToString(CultureInfo.InvariantCulture),
-                experiment.Arguments.SequenceLength.ToString(CultureInfo.InvariantCulture),
-                experiment.Arguments.SamplingStages.ToString(CultureInfo.InvariantCulture),
-                experiment.Arguments.ShrinkFactor.ToString("0.##", CultureInfo.InvariantCulture)
-            );
-
-            string equationText = equationValue.ToString("0.00", CultureInfo.InvariantCulture);
-            string encodedText = encodedElements.ToString(CultureInfo.InvariantCulture);
-
-            lines.Add(string.Join(",", commonPrefix, "Sampling", equationText, encodedText, ratioText));
-            lines.Add(string.Join(",", commonPrefix, "Recovery", equationText, encodedText, ratioText));
-        }
-
-        string reportPath = Path.Combine(directory, "table_size_ratio.csv");
-        File.WriteAllLines(reportPath, lines);
-        Console.WriteLine($"Saved table-size ratios to {reportPath}");
     }
 
     private static void SaveResult(ExperimentResult result, string saveDirectory)
@@ -658,6 +622,8 @@ public class Program
         private double _sumSuccessSq;
         private double _sumDuration;
         private double _sumDurationSq;
+        private double _sumRecoveryFraction;
+        private double _sumRecoveryFractionSq;
         private int _count;
 
         public void Add(double success, double duration)
@@ -667,6 +633,8 @@ public class Program
                 _count++;
                 _sumSuccess += success;
                 _sumSuccessSq += success * success;
+                _sumRecoveryFraction += success;
+                _sumRecoveryFractionSq += success * success;
                 _sumDuration += duration;
                 _sumDurationSq += duration * duration;
             }
@@ -728,6 +696,31 @@ public class Program
                     if (_count == 0) return 0;
                     var mean = _sumDuration / _count;
                     var variance = _sumDurationSq / _count - mean * mean;
+                    return variance < 0 ? 0 : variance;
+                }
+            }
+        }
+
+        public double AverageRecoveryFraction
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _count == 0 ? 0 : _sumRecoveryFraction / _count;
+                }
+            }
+        }
+
+        public double VarianceRecoveryFraction
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    if (_count == 0) return 0;
+                    var mean = _sumRecoveryFraction / _count;
+                    var variance = _sumRecoveryFractionSq / _count - mean * mean;
                     return variance < 0 ? 0 : variance;
                 }
             }
