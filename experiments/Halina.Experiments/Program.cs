@@ -111,12 +111,13 @@ public class Program
             Console.WriteLine("  dotnet run -- kmer [config.json] [--parallel] [--max-concurrency N]");
             Console.WriteLine("  dotnet run -- mutation [config.json]");
             Console.WriteLine("  dotnet run -- hashset-extended [config.json] [--parallel] [--max-concurrency N]");
-            Console.WriteLine("  dotnet run -- analyze [results_directory]");
+            Console.WriteLine("  dotnet run -- analyze [results_directory] [output_csv]");
             return;
         }
 
         string mode = args[0].ToLower();
         string? configPath = null;
+        string? reportPath = null;
         bool useParallel = false;
         int? maxConcurrency = null;
         for (int i = 1; i < args.Length; i++)
@@ -141,6 +142,10 @@ public class Program
             {
                 configPath = current;
             }
+            else if (reportPath == null)
+            {
+                reportPath = current;
+            }
         }
 
         if (mode == "kmer")
@@ -157,7 +162,7 @@ public class Program
         }
         else if (mode == "analyze")
         {
-            RunResultsAnalysis(configPath);
+            RunResultsAnalysis(configPath, reportPath);
         }
         else
         {
@@ -249,7 +254,7 @@ public class Program
         ExecuteHashSetExtendedExperiments(specs, config, useParallel, maxConcurrency);
     }
 
-    private static void RunResultsAnalysis(string? resultsDirectory)
+    private static void RunResultsAnalysis(string? resultsDirectory, string? outputFilePath)
     {
         string directory = string.IsNullOrWhiteSpace(resultsDirectory) ? "results" : resultsDirectory;
         if (!Directory.Exists(directory))
@@ -260,7 +265,6 @@ public class Program
 
         var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         var experiments = new List<ExperimentResult>();
-        var extendedExperiments = new List<ExtendedExperimentResult>();
 
         foreach (var file in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
         {
@@ -271,11 +275,6 @@ public class Program
                 if (result != null)
                 {
                     experiments.Add(result);
-                }
-                var extended = JsonSerializer.Deserialize<ExtendedExperimentResult>(text, options);
-                if (extended != null)
-                {
-                    extendedExperiments.Add(extended);
                 }
             }
             catch (JsonException) { }
@@ -307,18 +306,31 @@ public class Program
             return;
         }
 
-        Console.WriteLine("K,L,AvgSuccessRate,VarianceSuccessRate,AvgDurationMs,VarianceDurationMs,SampleCount");
+        var lines = new List<string>
+        {
+            "K,L,AvgSuccessRate,VarianceSuccessRate,AvgDurationMs,VarianceDurationMs,SampleCount,Ratio"
+        };
+
         foreach (var entry in statsByPair.OrderBy(e => e.Key.K).ThenBy(e => e.Key.L))
         {
             var (k, l) = entry.Key;
             var stats = entry.Value;
-            Console.WriteLine($"{k},{l},{stats.AverageSuccessRate:0.0000},{stats.VarianceSuccessRate:0.0000},{stats.AverageDuration:0.000},{stats.VarianceDuration:0.000},{stats.Count}");
+            double ratio = (double)(k * 1.5 + l) / Math.Max(1, stats.Count);
+            lines.Add($"{k},{l},{stats.AverageSuccessRate:0.0000},{stats.VarianceSuccessRate:0.0000},{stats.AverageDuration:0.000},{stats.VarianceDuration:0.000},{stats.Count},{ratio:0.000000}");
         }
 
-        if (extendedExperiments.Count > 0)
+        string resolvedOutput = string.IsNullOrWhiteSpace(outputFilePath)
+            ? Path.Combine(directory, "analysis.csv")
+            : outputFilePath;
+
+        var outputDirectory = Path.GetDirectoryName(resolvedOutput);
+        if (!string.IsNullOrEmpty(outputDirectory) && !Directory.Exists(outputDirectory))
         {
-            WriteRelativeSizeCsv(directory, extendedExperiments);
+            Directory.CreateDirectory(outputDirectory);
         }
+
+        File.WriteAllLines(resolvedOutput, lines);
+        Console.WriteLine($"Saved analysis to {resolvedOutput}");
     }
 
     private static void WriteRelativeSizeCsv(string directory, IEnumerable<ExtendedExperimentResult> extendedExperiments)
