@@ -107,32 +107,43 @@ public class Program
         if (args.Length == 0)
         {
             Console.WriteLine("Usage:");
-            Console.WriteLine("  dotnet run -- kmer [config.json]");
+            Console.WriteLine("  dotnet run -- kmer [config.json] [--parallel] [--max-concurrency N]");
             Console.WriteLine("  dotnet run -- mutation [config.json]");
-            Console.WriteLine("  dotnet run -- hashset-extended [config.json]");
+            Console.WriteLine("  dotnet run -- hashset-extended [config.json] [--parallel] [--max-concurrency N]");
             return;
         }
 
         string mode = args[0].ToLower();
         string? configPath = null;
         bool useParallel = false;
+        int? maxConcurrency = null;
         for (int i = 1; i < args.Length; i++)
         {
-            if (args[i].Equals("--parallel", StringComparison.OrdinalIgnoreCase))
+            var current = args[i];
+            if (current.Equals("--parallel", StringComparison.OrdinalIgnoreCase))
             {
                 useParallel = true;
                 continue;
             }
 
+            if (current.Equals("--max-concurrency", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (int.TryParse(args[++i], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) && parsed > 0)
+                {
+                    maxConcurrency = parsed;
+                }
+                continue;
+            }
+
             if (configPath == null)
             {
-                configPath = args[i];
+                configPath = current;
             }
         }
 
         if (mode == "kmer")
         {
-            RunKmerExperiments(configPath, useParallel);
+            RunKmerExperiments(configPath, useParallel, maxConcurrency);
         }
         else if (mode == "mutation")
         {
@@ -140,7 +151,7 @@ public class Program
         }
         else if (mode == "hashset-extended")
         {
-            RunHashSetPredictorExtended(configPath, useParallel);
+            RunHashSetPredictorExtended(configPath, useParallel, maxConcurrency);
         }
         else
         {
@@ -148,7 +159,7 @@ public class Program
         }
     }
 
-    private static void RunKmerExperiments(string? configPath, bool useParallel)
+    private static void RunKmerExperiments(string? configPath, bool useParallel, int? maxConcurrency)
     {
         KmerExperimentConfig config;
         if (configPath != null && File.Exists(configPath))
@@ -168,7 +179,7 @@ public class Program
 
         Directory.CreateDirectory(config.Path);
         var specs = BuildKmerExperimentSpecs(config);
-        ExecuteKmerExperiments(specs, config, useParallel);
+        ExecuteKmerExperiments(specs, config, useParallel, maxConcurrency);
     }
 
     private static void RunMutationExperiments(string? configPath)
@@ -209,7 +220,7 @@ public class Program
         Console.WriteLine($"Completed {count} experiments.");
     }
 
-    private static void RunHashSetPredictorExtended(string? configPath, bool useParallel)
+    private static void RunHashSetPredictorExtended(string? configPath, bool useParallel, int? maxConcurrency)
     {
         HashSetExtendedConfig config;
         if (configPath != null && File.Exists(configPath))
@@ -229,7 +240,7 @@ public class Program
 
         Directory.CreateDirectory(config.Path);
         var specs = BuildExtendedExperimentSpecs(config);
-        ExecuteHashSetExtendedExperiments(specs, config, useParallel);
+        ExecuteHashSetExtendedExperiments(specs, config, useParallel, maxConcurrency);
     }
 
     private static void SaveResult(ExperimentResult result, string saveDirectory)
@@ -282,7 +293,7 @@ public class Program
         return specs;
     }
 
-    private static void ExecuteKmerExperiments(IEnumerable<KmerExperimentSpec> specs, KmerExperimentConfig config, bool useParallel)
+    private static void ExecuteKmerExperiments(IEnumerable<KmerExperimentSpec> specs, KmerExperimentConfig config, bool useParallel, int? maxConcurrency)
     {
         int completed = 0;
         Action<KmerExperimentSpec> work = spec =>
@@ -293,9 +304,10 @@ public class Program
             }
         };
 
+        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, maxConcurrency ?? Environment.ProcessorCount) };
         if (useParallel)
         {
-            Parallel.ForEach(specs, work);
+            Parallel.ForEach(specs, parallelOptions, work);
         }
         else
         {
@@ -350,7 +362,7 @@ public class Program
         return specs;
     }
 
-    private static void ExecuteHashSetExtendedExperiments(IEnumerable<HashSetExtendedSpec> specs, HashSetExtendedConfig config, bool useParallel)
+    private static void ExecuteHashSetExtendedExperiments(IEnumerable<HashSetExtendedSpec> specs, HashSetExtendedConfig config, bool useParallel, int? maxConcurrency)
     {
         int completed = 0;
         Action<HashSetExtendedSpec> work = spec =>
@@ -361,9 +373,10 @@ public class Program
             }
         };
 
+        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, maxConcurrency ?? Environment.ProcessorCount) };
         if (useParallel)
         {
-            Parallel.ForEach(specs, work);
+            Parallel.ForEach(specs, parallelOptions, work);
         }
         else
         {
