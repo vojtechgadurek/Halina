@@ -463,7 +463,7 @@ public class Program
 
     private static bool ResultAlreadyCached(string saveDirectory, string searchPattern)
     {
-        Console.WriteLine($"Checking cache for pattern: {searchPattern}");
+        //Console.WriteLine($"Checking cache for pattern: {searchPattern}");
         return GetDirectoryCache(saveDirectory).ContainsPattern(searchPattern);
     }
 
@@ -507,7 +507,7 @@ public class Program
                 foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
                 {
                     _files.Add(Path.GetFileName(file));
-                    Console.WriteLine($"Cached existing file: {Path.GetFileName(file)}");
+                    //Console.WriteLine($"Cached existing file: {Path.GetFileName(file)}");
                 }
             }
         }
