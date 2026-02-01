@@ -1,0 +1,52 @@
+{
+  "Path": "results_hashset_extended",
+  "Seed": {
+    "Start": 123,
+    "End": 123,
+    "Step": 1,
+    "Multiplicative": true
+  },
+  "L": {
+    "Start": 10,
+    "End": 10,
+    "Step": 1,
+    "Multiplicative": true
+  },
+  "K": {
+    "Start": 15,
+    "End": 15,
+    "Step": 1,
+    "Multiplicative": true
+  },
+  "KmerLength": {
+    "Start": 31,
+    "End": 31,
+    "Step": 1,
+    "Multiplicative": false
+  },
+  "NSequences": {
+    "Start": 200,
+    "End": 200,
+    "Step": 1,
+    "Multiplicative": false
+  },
+  "SequenceLength": {
+    "Start": 100,
+    "End": 100,
+    "Step": 1,
+    "Multiplicative": false
+  },
+  "SamplingStages": {
+    "Start": 3,
+    "End": 5,
+    "Step": 1,
+    "Multiplicative": true
+  },
+  "MaxDistance": {
+    "Start": 0,
+    "End": 0,
+    "Step": 1,
+    "Multiplicative": false
+  },
+  "ShrinkFactor": 1.5
+}

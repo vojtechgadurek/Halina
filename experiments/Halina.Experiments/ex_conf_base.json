@@ -1,0 +1,41 @@
+{
+  "Path": "results",
+  "Seed": {
+    "Start": 1.0,
+    "End": 1.0,
+    "Step": 1.0,
+    "Multiplicative": true
+  },
+  "L": {
+    "Start": 1.0,
+    "End": 30.0,
+    "Step": 1.1,
+    "Multiplicative": true
+  },
+  "K": {
+    "Start": 20.0,
+    "End": 200.0,
+    "Step": 1.1,
+    "Multiplicative": true
+  },
+  "KmerLength": {
+    "Start": 101,
+    "End": 101,
+    "Step": 1
+  },
+  "NSequences": {
+    "Start": 101,
+    "End": 101,
+    "Step": 10
+  },
+  "SequenceLength": {
+    "Start": 201,
+    "End": 201,
+    "Step": 1
+  },
+  "MaxDistance": {
+    "Start": 20.0,
+    "End": 20.0,
+    "Step": 1.0
+  }
+}
