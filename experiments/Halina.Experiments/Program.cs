@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -240,6 +241,7 @@ public class Program
 
         Directory.CreateDirectory(config.Path);
         var specs = BuildExtendedExperimentSpecs(config).ToList();
+        ExecuteHashSetExtendedExperiments(specs, config, useParallel, maxConcurrency);
     }
 
     private static void SaveResult(ExperimentResult result, string saveDirectory)
@@ -255,6 +257,7 @@ public class Program
         var options = new JsonSerializerOptions { WriteIndented = true };
         string json = JsonSerializer.Serialize(result, options);
         File.WriteAllText(filename, json);
+        TrackFileInCache(saveDirectory, filename);
         Console.WriteLine($"Saved result to {filename}");
     }
 
@@ -269,11 +272,13 @@ public class Program
         var options = new JsonSerializerOptions { WriteIndented = true };
         string json = JsonSerializer.Serialize(result, options);
         File.WriteAllText(filename, json);
+        TrackFileInCache(saveDirectory, filename);
         Console.WriteLine($"Saved result to {filename}");
     }
 
     private record struct KmerExperimentSpec(int Seed, int L, int K, int KmerLength, int NSequences, int SequenceLength, int MaxDistance);
     private record struct HashSetExtendedSpec(int Seed, int L, int K, int KmerLength, int NSequences, int SequenceLength, int SamplingStages, double ShrinkFactor, int MaxDistance);
+    private static readonly ConcurrentDictionary<string, DirectoryCache> DirectoryFilesCache = new();
 
     private static IEnumerable<KmerExperimentSpec> BuildKmerExperimentSpecs(KmerExperimentConfig config)
     {
@@ -441,8 +446,8 @@ public class Program
 
     private static string BuildKmerCachePattern(int k, int l, int kmerLen, int nSeq, int seqLen, int seed, int maxDistance)
     {
-        return $"v=v1_k={k}_l={l}_kmer={kmerLen}_nseq={nSeq}_len={seqLen}_tbl=*" +
-               $"_seed={seed}_maxdist={maxDistance}.json";
+        // Table size is always deterministic (seqLen * kmerLen), so omit it from the glob pattern.
+        return $"v=v1_k={k}_l={l}_kmer={kmerLen}_nseq={nSeq}_len={seqLen}_seed={seed}_maxdist={maxDistance}.json";
     }
 
     private static string BuildExtendedResultPrefix(int k, int l, int kmerLen, int nSeq, int seqLen, int stages, double shrinkFactor, int maxDistance)
@@ -459,8 +464,19 @@ public class Program
     private static bool ResultAlreadyCached(string saveDirectory, string searchPattern)
     {
         Directory.CreateDirectory(saveDirectory);
-        return Directory.EnumerateFiles(saveDirectory, searchPattern, SearchOption.TopDirectoryOnly).Any();
+        return GetDirectoryCache(saveDirectory).ContainsPattern(searchPattern);
     }
+
+    private static DirectoryCache GetDirectoryCache(string saveDirectory)
+        => DirectoryFilesCache.GetOrAdd(saveDirectory, dir =>
+        {
+            var cache = new DirectoryCache();
+            cache.Load(dir);
+            return cache;
+        });
+
+    private static void TrackFileInCache(string saveDirectory, string filePath)
+        => GetDirectoryCache(saveDirectory).Add(filePath);
 
     private static void DrawProgress(int current, int total, object sync)
     {
@@ -474,6 +490,37 @@ public class Program
             if (current >= total)
             {
                 Console.WriteLine();
+            }
+        }
+    }
+
+    private sealed class DirectoryCache
+    {
+        private readonly object _sync = new();
+        private readonly HashSet<string> _files = new(StringComparer.OrdinalIgnoreCase);
+
+        public void Load(string directory)
+        {
+            lock (_sync)
+            {
+                _files.Clear();
+                foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+                {
+                    _files.Add(Path.GetFileName(file));
+                }
+            }
+        }
+
+        public bool ContainsPattern(string pattern)
+        {
+        return _files.Contains(pattern);
+        }
+
+        public void Add(string filePath)
+        {
+            lock (_sync)
+            {
+                _files.Add(Path.GetFileName(filePath));
             }
         }
     }
