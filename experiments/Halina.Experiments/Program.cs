@@ -598,6 +598,7 @@ public class Program
                 {
                     foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
                     {
+                        Console.WriteLine(Normalize(Path.GetFileName(file)));
                         _files.Add(Normalize(Path.GetFileName(file)));
                     }
                 }
@@ -606,6 +607,7 @@ public class Program
 
         public bool ContainsPattern(string pattern)
         {
+            Console.WriteLine($"Checking normalized pattern: {Normalize(pattern)}"); 
             return _files.Contains(Normalize(pattern));
         }
 
