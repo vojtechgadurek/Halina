@@ -78,3 +78,19 @@ To run performance benchmarks:
 ```bash
 dotnet run --project bench/Halina.Benchmarks -c Release
 ```
+
+## Running in Docker
+
+Build the container once and keep the published artifacts isolated from the host.
+
+```bash
+docker build -t halina:latest .
+```
+
+When running experiments you can mount a directory containing your configuration files into `/app/config` and pass the path you mounted as the config argument. The runtime image exposes `/app/config` as a volume, so anything you place there is preserved across runs if the container is restarted.
+
+```bash
+docker run --rm -v /path/to/configs:/app/config halina:latest hashset-extended /app/config/hashset_extended_config.json --parallel
+```
+
+Inside the container you can also inspect the default config (`hashset_extended_config_default.json`) before overriding it; anything you add to the mounted directory is available to the entry point so you can pick the desired JSON file by passing its path.
