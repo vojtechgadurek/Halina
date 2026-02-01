@@ -281,38 +281,35 @@ public class Program
             return;
         }
 
-        var grouped = experiments
-            .GroupBy(r => (K: r.Arguments.K, L: r.Arguments.L))
-            .ToDictionary(g => g.Key, g => new AnalysisStats(
-                AverageRecoveryRate: g.Average(r => (double)r.Result.CorrectlyRecovered / Math.Max(1, r.Result.TotalItems)),
-                SeedCount: g.Count()));
-
-        var ks = grouped.Keys.Select(k => k.K).Distinct().Order();
-        var ls = grouped.Keys.Select(k => k.L).Distinct().Order();
-
-        Console.WriteLine("CSV (L x K) showing average reconstruction rate by seed:");
-        Console.Write("L/K");
-        foreach (var k in ks)
+        var statsByPair = new Dictionary<(int K, int L), StatsAccumulator>();
+        foreach (var experiment in experiments)
         {
-            Console.Write($",{k}");
-        }
-        Console.WriteLine();
-
-        foreach (var l in ls)
-        {
-            Console.Write(l);
-            foreach (var k in ks)
+            double successRate = (double)experiment.Result.CorrectlyRecovered / Math.Max(1, experiment.Result.TotalItems);
+            double duration = experiment.Result.DurationMs;
+            var key = (experiment.Arguments.K, experiment.Arguments.L);
+            if (!statsByPair.TryGetValue(key, out var accumulator))
             {
-                if (grouped.TryGetValue((k, l), out var stats))
-                {
-                    Console.Write($",{stats.AverageRecoveryRate:0.000}");
-                }
-                else
-                {
-                    Console.Write(",");
-                }
+                accumulator = new StatsAccumulator();
+                statsByPair[key] = accumulator;
             }
-            Console.WriteLine();
+            double sampleTableSize = Math.Max(100, (int)(experiment.Arguments.TableSize / Math.Max(1, experiment.Arguments.K) * 1.5));
+            double recoveryTableSize = Math.Max(100, (int)(experiment.Arguments.TableSize / Math.Max(1, experiment.Arguments.L) * 1.0));
+            double memoryPerElement = (sampleTableSize + recoveryTableSize) / Math.Max(1, experiment.Arguments.TableSize);
+            accumulator.Add(successRate, duration, memoryPerElement);
+        }
+
+        if (statsByPair.Count == 0)
+        {
+            Console.WriteLine("No statistics produced from the provided results.");
+            return;
+        }
+
+        Console.WriteLine("K,L,AvgSuccessRate,VarianceSuccessRate,AvgDurationMs,VarianceDurationMs,AvgMemoryPerElement,VarianceMemoryPerElement,SampleCount");
+        foreach (var entry in statsByPair.OrderBy(e => e.Key.K).ThenBy(e => e.Key.L))
+        {
+            var (k, l) = entry.Key;
+            var stats = entry.Value;
+            Console.WriteLine($"{k},{l},{stats.AverageSuccessRate:0.0000},{stats.VarianceSuccessRate:0.0000},{stats.AverageDuration:0.000},{stats.VarianceDuration:0.000},{stats.AverageMemoryPerElement:0.0000},{stats.VarianceMemoryPerElement:0.0000},{stats.Count}");
         }
     }
 
@@ -518,8 +515,8 @@ public class Program
 
     private static string BuildKmerCachePattern(int k, int l, int kmerLen, int nSeq, int seqLen, int seed, int maxDistance)
     {
-        // Table size is always deterministic (seqLen * kmerLen), so omit it from the glob pattern.
-        return $"v=v1_k={k}_l={l}_kmer={kmerLen}_nseq={nSeq}_len={seqLen}_tbl={ (1 + seqLen) *nSeq}_seed={seed}_maxdist={maxDistance}.json";
+        // Table size is deterministic (seqLen * kmerLen), so safely omit it from the glob pattern.
+        return $"v=v1_k={k}_l={l}_kmer={kmerLen}_nseq={nSeq}_len={seqLen}_seed={seed}_maxdist={maxDistance}.json";
     }
 
     private static string BuildExtendedResultPrefix(int k, int l, int kmerLen, int nSeq, int seqLen, int stages, double shrinkFactor, int maxDistance)
@@ -566,8 +563,6 @@ public class Program
         }
     }
 
-    private readonly record struct AnalysisStats(double AverageRecoveryRate, int SeedCount);
-
     private sealed class DirectoryCache
     {
         private readonly object _sync = new();
@@ -588,7 +583,17 @@ public class Program
 
         public bool ContainsPattern(string pattern)
         {
-        return _files.Contains(pattern);
+            lock (_sync)
+            {
+                foreach (var file in _files)
+                {
+                    if (System.IO.FileSystemName.MatchesSimpleExpression(pattern, file))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         public void Add(string filePath)
@@ -596,6 +601,118 @@ public class Program
             lock (_sync)
             {
                 _files.Add(Path.GetFileName(filePath));
+            }
+        }
+    }
+
+    private sealed class StatsAccumulator
+    {
+        private readonly object _sync = new();
+        private double _sumSuccess;
+        private double _sumSuccessSq;
+        private double _sumDuration;
+        private double _sumDurationSq;
+        private double _sumMemory;
+        private double _sumMemorySq;
+        private int _count;
+
+        public void Add(double success, double duration, double memoryPerElement)
+        {
+            lock (_sync)
+            {
+                _count++;
+                _sumSuccess += success;
+                _sumSuccessSq += success * success;
+                _sumDuration += duration;
+                _sumDurationSq += duration * duration;
+                _sumMemory += memoryPerElement;
+                _sumMemorySq += memoryPerElement * memoryPerElement;
+            }
+        }
+
+        public int Count
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _count;
+                }
+            }
+        }
+
+        public double AverageSuccessRate
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _count == 0 ? 0 : _sumSuccess / _count;
+                }
+            }
+        }
+
+        public double VarianceSuccessRate
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    if (_count == 0) return 0;
+                    var mean = _sumSuccess / _count;
+                    var variance = _sumSuccessSq / _count - mean * mean;
+                    return variance < 0 ? 0 : variance;
+                }
+            }
+        }
+
+        public double AverageDuration
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _count == 0 ? 0 : _sumDuration / _count;
+                }
+            }
+        }
+
+        public double VarianceDuration
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    if (_count == 0) return 0;
+                    var mean = _sumDuration / _count;
+                    var variance = _sumDurationSq / _count - mean * mean;
+                    return variance < 0 ? 0 : variance;
+                }
+            }
+        }
+
+        public double AverageMemoryPerElement
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _count == 0 ? 0 : _sumMemory / _count;
+                }
+            }
+        }
+
+        public double VarianceMemoryPerElement
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    if (_count == 0) return 0;
+                    var mean = _sumMemory / _count;
+                    var variance = _sumMemorySq / _count - mean * mean;
+                    return variance < 0 ? 0 : variance;
+                }
             }
         }
     }
