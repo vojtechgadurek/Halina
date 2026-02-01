@@ -61,7 +61,7 @@ You can customize parameters such as:
 *   `SequenceLength`: Length of each sequence.
 *   `K`, `L`: Sampling parameters for specific experiments.
 
-Example `config.json`:
+Example `config.json` (you can use the supplied `experiments/Halina.Experiments/ex_conf_base.json` as a starting point):
 ```json
 {
   "Path": "results",
@@ -87,10 +87,15 @@ Build the container once and keep the published artifacts isolated from the host
 docker build -t halina:latest .
 ```
 
-When running experiments you can mount a directory containing your configuration files into `/app/config` and pass the path you mounted as the config argument. The runtime image exposes `/app/config` as a volume, so anything you place there is preserved across runs if the container is restarted.
+When running experiments you can mount a directory containing your configuration files into `/app/config` (the container already ships with `ex_conf_base.json` in the repo) and pass the path you mounted as the config argument. Likewise mount a host directory to `/app/results` so generated JSON outputs stay on the host. Update the `Path` entry in your mounted config (e.g., set it to `/app/results/out`) so the experiment writes directly into the mounted folder; after the run you'll find output JSON files in `/path/to/results/out` on the host.
 
 ```bash
-docker run --rm -v /path/to/configs:/app/config halina:latest hashset-extended /app/config/hashset_extended_config.json --parallel
+docker run --rm \
+  -v /path/to/configs:/app/config \
+  -v /path/to/results:/app/results \
+  halina:latest hashset-extended /app/config/ex_conf_base.json --parallel
+
+If you prefer to keep edits inside the repo, copy `experiments/Halina.Experiments/ex_conf_base.json` to the mount target and pass that path (or override values in your own file but keep the same name so the README command keeps working).
 ```
 
 Inside the container you can also inspect the default config (`hashset_extended_config_default.json`) before overriding it; anything you add to the mounted directory is available to the entry point so you can pick the desired JSON file by passing its path.

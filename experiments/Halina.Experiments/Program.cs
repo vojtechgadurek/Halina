@@ -293,15 +293,28 @@ public class Program
         return specs;
     }
 
-    private static void ExecuteKmerExperiments(IEnumerable<KmerExperimentSpec> specs, KmerExperimentConfig config, bool useParallel, int? maxConcurrency)
+    private static void ExecuteKmerExperiments(IReadOnlyList<KmerExperimentSpec> specs, KmerExperimentConfig config, bool useParallel, int? maxConcurrency)
     {
+        int total = specs.Count;
+        if (total == 0)
+        {
+            Console.WriteLine("No K-mer experiment specs defined.");
+            return;
+        }
+
+        Console.WriteLine($"Running {total} K-mer experiments {(useParallel ? "(parallel)" : "(sequential)")}." );
         int completed = 0;
+        int processed = 0;
+        var progressLock = new object();
         Action<KmerExperimentSpec> work = spec =>
         {
             if (ProcessKmerExperiment(spec, config))
             {
                 Interlocked.Increment(ref completed);
             }
+
+            int processedSoFar = Interlocked.Increment(ref processed);
+            DrawProgress(processedSoFar, total, progressLock);
         };
 
         var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, maxConcurrency ?? Environment.ProcessorCount) };

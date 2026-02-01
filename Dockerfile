@@ -15,9 +15,12 @@ WORKDIR /app
 
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
 ENV CONFIG_DIR=/app/config
+ENV RESULTS_DIR=/app/results
 
 RUN mkdir -p ${CONFIG_DIR}
+RUN mkdir -p ${RESULTS_DIR}
 VOLUME ${CONFIG_DIR}
+VOLUME ${RESULTS_DIR}
 
 COPY --from=build /app/publish .
 
