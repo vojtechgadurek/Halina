@@ -14,6 +14,7 @@ public record ExtendedExperimentArguments(
     int L,
     int SamplingStages,
     double ShrinkFactor,
+    int MaxDistance,
     int Seed
 );
 
@@ -45,7 +46,8 @@ public static class HashSetPredictorExtended
         int l,
         int samplingStages,
         double shrinkFactor,
-        int seed = 123)
+        int seed = 123,
+        int maxDistance = 0)
     {
          var swGen = Stopwatch.StartNew();
         // 1. Generate Data
@@ -198,7 +200,7 @@ public static class HashSetPredictorExtended
         int notRecovered = originalSet.Count - correctlyRecovered;
 
         var pumpedItems = finalReconstructed.Count;
-        var arguments = new ExtendedExperimentArguments(baseTableSize, kmerSize, nSequences, sequenceLength, k, l, stageCount, shrink, seed);
+        var arguments = new ExtendedExperimentArguments(baseTableSize, kmerSize, nSequences, sequenceLength, k, l, stageCount, shrink, Math.Max(0, maxDistance), seed);
 
         return new ExtendedExperimentResult(
             "v2",

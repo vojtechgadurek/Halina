@@ -150,6 +150,7 @@ public class Program
             Console.WriteLine("Created 'kmer_config_default.json' template.");
         }
 
+        Directory.CreateDirectory(config.Path);
         int count = 0;
         foreach (var seed in config.Seed.Values())
         foreach (var l in config.L.Values())
@@ -159,10 +160,16 @@ public class Program
         foreach (var seqLen in config.SequenceLength.Values())
         foreach (var distance in config.MaxDistance.Values())
         {
-            Console.WriteLine($"Running Kmer Experiment: Seed={seed}, L={l}, K={k}, Kmer={kmerLen}, NSeq={nSeq}, SeqLen={seqLen}");
+            var pattern = BuildKmerCachePattern(k, l, kmerLen, nSeq, seqLen, seed, distance);
+            if (ResultAlreadyCached(config.Path, pattern))
+            {
+                Console.WriteLine("Skipping run because cached result already exists.");
+                continue;
+            }
+            Console.WriteLine($"Running Kmer Experiment: Seed={seed}, L={l}, K={k}, Kmer={kmerLen}, NSeq={nSeq}, SeqLen={seqLen}, MaxDistance={distance}");
             try 
             {
-                var result = KmerExperiments.RunExperiment(kmerLen, nSeq, seqLen, k, l, seed);
+                var result = KmerExperiments.RunExperiment(kmerLen, nSeq, seqLen, k, l, seed, distance);
                 Console.WriteLine($"Experiment finished in {result.Result.DurationMs:F2} ms (Gen: {result.Result.DataGenerationDurationMs:F2} ms)");
                 SaveResult(result, config.Path);
                 count++;
@@ -231,6 +238,7 @@ public class Program
             Console.WriteLine("Created 'hashset_extended_config_default.json' template.");
         }
 
+        Directory.CreateDirectory(config.Path);
         int count = 0;
         foreach (var seed in config.Seed.Values())
         foreach (var l in config.L.Values())
@@ -241,10 +249,17 @@ public class Program
         foreach (var stages in config.SamplingStages.Values())
         foreach (var maxDistance in config.MaxDistance.Values())
         {
+            var prefix = BuildExtendedResultPrefix(k, l, kmerLen, nSeq, seqLen, stages, config.ShrinkFactor, maxDistance);
+            var pattern = BuildExtendedCachePattern(prefix, seed);
+            if (ResultAlreadyCached(config.Path, pattern))
+            {
+                Console.WriteLine("Skipping run because cached result already exists.");
+                continue;
+            }
             Console.WriteLine($"Running extended HashSet predictor: Seed={seed}, L={l}, K={k}, Kmer={kmerLen}, NSeq={nSeq}, SeqLen={seqLen}, Stages={stages}, MaxDistance={maxDistance}");
             try
             {
-                var result = HashSetPredictorExtended.Run(kmerLen, nSeq, seqLen, k, l, stages, config.ShrinkFactor, seed);
+                var result = HashSetPredictorExtended.Run(kmerLen, nSeq, seqLen, k, l, stages, config.ShrinkFactor, seed, maxDistance);
                 Console.WriteLine($"Experiment finished in {result.Result.DurationMs:F2} ms (Gen: {result.Result.DataGenerationDurationMs:F2} ms)");
                 SaveExtendedResult(result, config.Path);
                 count++;
@@ -277,7 +292,7 @@ public class Program
     {
         Directory.CreateDirectory(saveDirectory);
         var shrinkLabel = result.Arguments.ShrinkFactor.ToString("0.##", CultureInfo.InvariantCulture);
-        string filename = $"v={result.Version}_k={result.Arguments.K}_l={result.Arguments.L}_kmer={result.Arguments.KmerSize}_nseq={result.Arguments.NSequences}_len={result.Arguments.SequenceLength}_stages={result.Arguments.SamplingStages}_shrink={shrinkLabel}_seed={result.Arguments.Seed}.json";
+        string filename = $"v={result.Version}_k={result.Arguments.K}_l={result.Arguments.L}_kmer={result.Arguments.KmerSize}_nseq={result.Arguments.NSequences}_len={result.Arguments.SequenceLength}_stages={result.Arguments.SamplingStages}_shrink={shrinkLabel}_maxdist={result.Arguments.MaxDistance}_seed={result.Arguments.Seed}.json";
         filename = Path.Combine(saveDirectory, filename);
         Console.WriteLine($"Saving result to {filename}");
 
@@ -285,5 +300,28 @@ public class Program
         string json = JsonSerializer.Serialize(result, options);
         File.WriteAllText(filename, json);
         Console.WriteLine($"Saved result to {filename}");
+    }
+
+    private static string BuildKmerCachePattern(int k, int l, int kmerLen, int nSeq, int seqLen, int seed, int maxDistance)
+    {
+        return $"v=v1_k={k}_l={l}_kmer={kmerLen}_nseq={nSeq}_len={seqLen}_tbl=*" +
+               $"_seed={seed}_maxdist={maxDistance}.json";
+    }
+
+    private static string BuildExtendedResultPrefix(int k, int l, int kmerLen, int nSeq, int seqLen, int stages, double shrinkFactor, int maxDistance)
+    {
+        var shrinkLabel = shrinkFactor.ToString("0.##", CultureInfo.InvariantCulture);
+        return $"v=v2_k={k}_l={l}_kmer={kmerLen}_nseq={nSeq}_len={seqLen}_stages={stages}_shrink={shrinkLabel}_maxdist={maxDistance}";
+    }
+
+    private static string BuildExtendedCachePattern(string prefix, int seed)
+    {
+        return $"{prefix}_seed={seed}.json";
+    }
+
+    private static bool ResultAlreadyCached(string saveDirectory, string searchPattern)
+    {
+        Directory.CreateDirectory(saveDirectory);
+        return Directory.EnumerateFiles(saveDirectory, searchPattern, SearchOption.TopDirectoryOnly).Any();
     }
 }
