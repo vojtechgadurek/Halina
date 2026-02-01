@@ -178,7 +178,7 @@ public class Program
         }
 
         Directory.CreateDirectory(config.Path);
-        var specs = BuildKmerExperimentSpecs(config);
+        var specs = BuildKmerExperimentSpecs(config).ToList();
         ExecuteKmerExperiments(specs, config, useParallel, maxConcurrency);
     }
 
@@ -239,8 +239,7 @@ public class Program
         }
 
         Directory.CreateDirectory(config.Path);
-        var specs = BuildExtendedExperimentSpecs(config);
-        ExecuteHashSetExtendedExperiments(specs, config, useParallel, maxConcurrency);
+        var specs = BuildExtendedExperimentSpecs(config).ToList();
     }
 
     private static void SaveResult(ExperimentResult result, string saveDirectory)
@@ -302,7 +301,7 @@ public class Program
             return;
         }
 
-        Console.WriteLine($"Running {total} K-mer experiments {(useParallel ? "(parallel)" : "(sequential)")}." );
+        Console.WriteLine($"Running {total} K-mer experiments {(useParallel ? "(parallel)" : "(sequential)")}.");
         int completed = 0;
         int processed = 0;
         var progressLock = new object();
@@ -375,15 +374,28 @@ public class Program
         return specs;
     }
 
-    private static void ExecuteHashSetExtendedExperiments(IEnumerable<HashSetExtendedSpec> specs, HashSetExtendedConfig config, bool useParallel, int? maxConcurrency)
+    private static void ExecuteHashSetExtendedExperiments(IReadOnlyList<HashSetExtendedSpec> specs, HashSetExtendedConfig config, bool useParallel, int? maxConcurrency)
     {
+        int total = specs.Count;
+        if (total == 0)
+        {
+            Console.WriteLine("No HashSet-extended experiment specs defined.");
+            return;
+        }
+
+        Console.WriteLine($"Running {total} HashSet-extended experiments {(useParallel ? "(parallel)" : "(sequential)")}.");
         int completed = 0;
+        int processed = 0;
+        var progressLock = new object();
         Action<HashSetExtendedSpec> work = spec =>
         {
             if (ProcessHashSetExtendedSpec(spec, config))
             {
                 Interlocked.Increment(ref completed);
             }
+
+            int processedSoFar = Interlocked.Increment(ref processed);
+            DrawProgress(processedSoFar, total, progressLock);
         };
 
         var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, maxConcurrency ?? Environment.ProcessorCount) };
@@ -448,5 +460,21 @@ public class Program
     {
         Directory.CreateDirectory(saveDirectory);
         return Directory.EnumerateFiles(saveDirectory, searchPattern, SearchOption.TopDirectoryOnly).Any();
+    }
+
+    private static void DrawProgress(int current, int total, object sync)
+    {
+        const int barWidth = 40;
+        double ratio = total == 0 ? 1.0 : (double)current / total;
+        int filled = (int)Math.Round(ratio * barWidth);
+        string bar = new string('#', filled).PadRight(barWidth);
+        lock (sync)
+        {
+            Console.Write($"\rProgress: [{bar}] {current}/{total}");
+            if (current >= total)
+            {
+                Console.WriteLine();
+            }
+        }
     }
 }
