@@ -260,6 +260,7 @@ public class Program
 
         var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         var experiments = new List<ExperimentResult>();
+        var extendedExperiments = new List<ExtendedExperimentResult>();
 
         foreach (var file in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
         {
@@ -270,6 +271,11 @@ public class Program
                 if (result != null)
                 {
                     experiments.Add(result);
+                }
+                var extended = JsonSerializer.Deserialize<ExtendedExperimentResult>(text, options);
+                if (extended != null)
+                {
+                    extendedExperiments.Add(extended);
                 }
             }
             catch (JsonException) { }
@@ -292,10 +298,7 @@ public class Program
                 accumulator = new StatsAccumulator();
                 statsByPair[key] = accumulator;
             }
-            double sampleTableSize = Math.Max(100, (int)(experiment.Arguments.TableSize / Math.Max(1, experiment.Arguments.K) * 1.5));
-            double recoveryTableSize = Math.Max(100, (int)(experiment.Arguments.TableSize / Math.Max(1, experiment.Arguments.L) * 1.0));
-            double memoryPerElement = (sampleTableSize + recoveryTableSize) / Math.Max(1, experiment.Arguments.TableSize);
-            accumulator.Add(successRate, duration, memoryPerElement);
+            accumulator.Add(successRate, duration);
         }
 
         if (statsByPair.Count == 0)
@@ -304,13 +307,54 @@ public class Program
             return;
         }
 
-        Console.WriteLine("K,L,AvgSuccessRate,VarianceSuccessRate,AvgDurationMs,VarianceDurationMs,AvgMemoryPerElement,VarianceMemoryPerElement,SampleCount");
+        Console.WriteLine("K,L,AvgSuccessRate,VarianceSuccessRate,AvgDurationMs,VarianceDurationMs,SampleCount");
         foreach (var entry in statsByPair.OrderBy(e => e.Key.K).ThenBy(e => e.Key.L))
         {
             var (k, l) = entry.Key;
             var stats = entry.Value;
-            Console.WriteLine($"{k},{l},{stats.AverageSuccessRate:0.0000},{stats.VarianceSuccessRate:0.0000},{stats.AverageDuration:0.000},{stats.VarianceDuration:0.000},{stats.AverageMemoryPerElement:0.0000},{stats.VarianceMemoryPerElement:0.0000},{stats.Count}");
+            Console.WriteLine($"{k},{l},{stats.AverageSuccessRate:0.0000},{stats.VarianceSuccessRate:0.0000},{stats.AverageDuration:0.000},{stats.VarianceDuration:0.000},{stats.Count}");
         }
+
+        if (extendedExperiments.Count > 0)
+        {
+            WriteRelativeSizeCsv(directory, extendedExperiments);
+        }
+    }
+
+    private static void WriteRelativeSizeCsv(string directory, IEnumerable<ExtendedExperimentResult> extendedExperiments)
+    {
+        var lines = new List<string>
+        {
+            "Version,Seed,K,L,KmerSize,NSequences,SequenceLength,SamplingStages,ShrinkFactor,TableRole,EquationValue,ElementsEncoded,Ratio"
+        };
+
+        foreach (var experiment in extendedExperiments)
+        {
+            double equationValue = experiment.Arguments.K * 1.5 + experiment.Arguments.L;
+            int encodedElements = Math.Max(1, experiment.Arguments.TableSize);
+            string ratioText = (equationValue / encodedElements).ToString("0.000000", CultureInfo.InvariantCulture);
+            string commonPrefix = string.Join(",",
+                experiment.Version,
+                experiment.Arguments.Seed.ToString(CultureInfo.InvariantCulture),
+                experiment.Arguments.K.ToString(CultureInfo.InvariantCulture),
+                experiment.Arguments.L.ToString(CultureInfo.InvariantCulture),
+                experiment.Arguments.KmerSize.ToString(CultureInfo.InvariantCulture),
+                experiment.Arguments.NSequences.ToString(CultureInfo.InvariantCulture),
+                experiment.Arguments.SequenceLength.ToString(CultureInfo.InvariantCulture),
+                experiment.Arguments.SamplingStages.ToString(CultureInfo.InvariantCulture),
+                experiment.Arguments.ShrinkFactor.ToString("0.##", CultureInfo.InvariantCulture)
+            );
+
+            string equationText = equationValue.ToString("0.00", CultureInfo.InvariantCulture);
+            string encodedText = encodedElements.ToString(CultureInfo.InvariantCulture);
+
+            lines.Add(string.Join(",", commonPrefix, "Sampling", equationText, encodedText, ratioText));
+            lines.Add(string.Join(",", commonPrefix, "Recovery", equationText, encodedText, ratioText));
+        }
+
+        string reportPath = Path.Combine(directory, "table_size_ratio.csv");
+        File.WriteAllLines(reportPath, lines);
+        Console.WriteLine($"Saved table-size ratios to {reportPath}");
     }
 
     private static void SaveResult(ExperimentResult result, string saveDirectory)
@@ -515,8 +559,8 @@ public class Program
 
     private static string BuildKmerCachePattern(int k, int l, int kmerLen, int nSeq, int seqLen, int seed, int maxDistance)
     {
-        // Table size is deterministic (seqLen * kmerLen), so safely omit it from the glob pattern.
-        return $"v=v1_k={k}_l={l}_kmer={kmerLen}_nseq={nSeq}_len={seqLen}_seed={seed}_maxdist={maxDistance}.json";
+        // Table size is always deterministic (seqLen * kmerLen), so omit it from the glob pattern.
+        return $"v=v1_k={k}_l={l}_kmer={kmerLen}_nseq={nSeq}_len={seqLen}_tbl={ (1 + seqLen) *nSeq}_seed={seed}_maxdist={maxDistance}.json";
     }
 
     private static string BuildExtendedResultPrefix(int k, int l, int kmerLen, int nSeq, int seqLen, int stages, double shrinkFactor, int maxDistance)
@@ -583,17 +627,7 @@ public class Program
 
         public bool ContainsPattern(string pattern)
         {
-            lock (_sync)
-            {
-                foreach (var file in _files)
-                {
-                    if (System.IO.FileSystemName.MatchesSimpleExpression(pattern, file))
-                    {
-                        return true;
-                    }
-                }
-            }
-            return false;
+        return _files.Contains(pattern);
         }
 
         public void Add(string filePath)
@@ -612,11 +646,9 @@ public class Program
         private double _sumSuccessSq;
         private double _sumDuration;
         private double _sumDurationSq;
-        private double _sumMemory;
-        private double _sumMemorySq;
         private int _count;
 
-        public void Add(double success, double duration, double memoryPerElement)
+        public void Add(double success, double duration)
         {
             lock (_sync)
             {
@@ -625,8 +657,6 @@ public class Program
                 _sumSuccessSq += success * success;
                 _sumDuration += duration;
                 _sumDurationSq += duration * duration;
-                _sumMemory += memoryPerElement;
-                _sumMemorySq += memoryPerElement * memoryPerElement;
             }
         }
 
@@ -686,31 +716,6 @@ public class Program
                     if (_count == 0) return 0;
                     var mean = _sumDuration / _count;
                     var variance = _sumDurationSq / _count - mean * mean;
-                    return variance < 0 ? 0 : variance;
-                }
-            }
-        }
-
-        public double AverageMemoryPerElement
-        {
-            get
-            {
-                lock (_sync)
-                {
-                    return _count == 0 ? 0 : _sumMemory / _count;
-                }
-            }
-        }
-
-        public double VarianceMemoryPerElement
-        {
-            get
-            {
-                lock (_sync)
-                {
-                    if (_count == 0) return 0;
-                    var mean = _sumMemory / _count;
-                    var variance = _sumMemorySq / _count - mean * mean;
                     return variance < 0 ? 0 : variance;
                 }
             }
