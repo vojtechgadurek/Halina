@@ -111,6 +111,7 @@ public class Program
             Console.WriteLine("  dotnet run -- kmer [config.json] [--parallel] [--max-concurrency N]");
             Console.WriteLine("  dotnet run -- mutation [config.json]");
             Console.WriteLine("  dotnet run -- hashset-extended [config.json] [--parallel] [--max-concurrency N]");
+            Console.WriteLine("  dotnet run -- analyze [results_directory]");
             return;
         }
 
@@ -153,6 +154,10 @@ public class Program
         else if (mode == "hashset-extended")
         {
             RunHashSetPredictorExtended(configPath, useParallel, maxConcurrency);
+        }
+        else if (mode == "analyze")
+        {
+            RunResultsAnalysis(configPath);
         }
         else
         {
@@ -242,6 +247,73 @@ public class Program
         Directory.CreateDirectory(config.Path);
         var specs = BuildExtendedExperimentSpecs(config).ToList();
         ExecuteHashSetExtendedExperiments(specs, config, useParallel, maxConcurrency);
+    }
+
+    private static void RunResultsAnalysis(string? resultsDirectory)
+    {
+        string directory = string.IsNullOrWhiteSpace(resultsDirectory) ? "results" : resultsDirectory;
+        if (!Directory.Exists(directory))
+        {
+            Console.WriteLine($"Results directory '{directory}' does not exist.");
+            return;
+        }
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var experiments = new List<ExperimentResult>();
+
+        foreach (var file in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
+        {
+            try
+            {
+                var text = File.ReadAllText(file);
+                var result = JsonSerializer.Deserialize<ExperimentResult>(text, options);
+                if (result != null)
+                {
+                    experiments.Add(result);
+                }
+            }
+            catch (JsonException) { }
+        }
+
+        if (experiments.Count == 0)
+        {
+            Console.WriteLine($"No experiment results could be read from '{directory}'.");
+            return;
+        }
+
+        var grouped = experiments
+            .GroupBy(r => (K: r.Arguments.K, L: r.Arguments.L))
+            .ToDictionary(g => g.Key, g => new AnalysisStats(
+                AverageRecoveryRate: g.Average(r => (double)r.Result.CorrectlyRecovered / Math.Max(1, r.Result.TotalItems)),
+                SeedCount: g.Count()));
+
+        var ks = grouped.Keys.Select(k => k.K).Distinct().Order();
+        var ls = grouped.Keys.Select(k => k.L).Distinct().Order();
+
+        Console.WriteLine("CSV (L x K) showing average reconstruction rate by seed:");
+        Console.Write("L/K");
+        foreach (var k in ks)
+        {
+            Console.Write($",{k}");
+        }
+        Console.WriteLine();
+
+        foreach (var l in ls)
+        {
+            Console.Write(l);
+            foreach (var k in ks)
+            {
+                if (grouped.TryGetValue((k, l), out var stats))
+                {
+                    Console.Write($",{stats.AverageRecoveryRate:0.000}");
+                }
+                else
+                {
+                    Console.Write(",");
+                }
+            }
+            Console.WriteLine();
+        }
     }
 
     private static void SaveResult(ExperimentResult result, string saveDirectory)
@@ -493,6 +565,8 @@ public class Program
             }
         }
     }
+
+    private readonly record struct AnalysisStats(double AverageRecoveryRate, int SeedCount);
 
     private sealed class DirectoryCache
     {
