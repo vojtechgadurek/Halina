@@ -315,7 +315,7 @@ public class Program
         {
             var (k, l) = entry.Key;
             var stats = entry.Value;
-            double ratio = (double)(k * 1.5 + l) / Math.Max(1, stats.Count);
+            double ratio = (double)(1.0 / k * 1.5 + 1.0 / l);
             lines.Add($"{k},{l},{stats.AverageSuccessRate:0.0000},{stats.VarianceSuccessRate:0.0000},{stats.AverageDuration:0.000},{stats.VarianceDuration:0.000},{stats.Count},{ratio:0.000000}");
         }
 
