@@ -122,6 +122,11 @@ public struct KmerDataIndexer : IIndexer<int, KmerData>
     public int ComputeIndex(KmerData data) => (int)(HashFunction.ComputeHash(data.Hash) % (ulong)Size);
 }
 
+public readonly struct KmerDataHashFunction : IHashFunction<ulong, KmerData>
+{
+    public ulong ComputeHash(KmerData data) => data.Hash;
+}
+
 public struct KmerDataPureTester : IPureTester<int, KmerData>
 {
     public TabulationHash HashFunction;
@@ -160,13 +165,18 @@ public static class KmerIBLTFactory
             var hash = new TabulationHash(i * 9876 + 54321);
             var indexer = new KmerDataIndexer { HashFunction = hash, Size = tableSize };
             var pureTester = new KmerDataPureTester { HashFunction = hash, Size = tableSize };
-            var dict = new ObjectKeyEncodeTable<KmerData>(tableSize, () => new KmerData
-            {
-                MetaData = new KmerMetaData { Index = 0, SetId = 0, MutationIndex = 0, MutationValue = 0 },
-                Hash = 0,
-                Data = new Kmer(kmerLength) // Minimal Kmer
-            });
-            tables.Add(new Table<ObjectKeyEncodeTable<KmerData>, KmerData, int, KmerDataIndexer, KmerDataPureTester>(dict, indexer, pureTester));
+            tables.Add(
+                new TableBuilder<KmerData, int>()
+                    .WithSize(tableSize)
+                    .WithNullData(() => new KmerData
+                    {
+                        MetaData = new KmerMetaData { Index = 0, SetId = 0, MutationIndex = 0, MutationValue = 0 },
+                        Hash = 0,
+                        Data = new Kmer(kmerLength)
+                    })
+                    .WithIndexer(indexer)
+                    .WithPureTester(pureTester)
+                    .Build());
         }
         
         return new Tables<KmerData>(tables, new TabuDecodingControl<KmerData>(3, data => data.Hash));

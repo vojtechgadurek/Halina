@@ -167,6 +167,7 @@ public interface ITable<TDataType>
     Buffer<TDataType> Decode();
     void Encode(Buffer<TDataType> data);
     TableState GetState();
+    void ToDecode();
 }
 
 
@@ -246,6 +247,10 @@ where TPureTester : struct, IPureTester<TIndex, TDataType>
     {
         return modifiedIndexes.HasModifications ? TableState.Decoding : TableState.Finished;
     }
+
+    public void ToDecode()
+    {
+    }
 }
 
 public class FilteredTable<TDataType> : ITable<TDataType>
@@ -269,6 +274,7 @@ public class FilteredTable<TDataType> : ITable<TDataType>
 
     public Buffer<TDataType> Decode() => table.Decode();
     public TableState GetState() => table.GetState();
+    public void ToDecode() => table.ToDecode();
 
     public void Encode(Buffer<TDataType> data)
     {
@@ -296,6 +302,111 @@ public class FilteredTable<TDataType> : ITable<TDataType>
     }
 }
 
+public class SwitchTable<TDataType> : ITable<TDataType>
+{
+    private readonly List<ITable<TDataType>> tables;
+    private readonly Func<TDataType, int> bucketSelector;
+
+    public SwitchTable(IEnumerable<ITable<TDataType>> tables, Func<TDataType, int> bucketSelector)
+    {
+        this.tables = new List<ITable<TDataType>>(tables ?? throw new ArgumentNullException(nameof(tables)));
+        this.bucketSelector = bucketSelector ?? throw new ArgumentNullException(nameof(bucketSelector));
+
+        if (this.tables.Count == 0)
+        {
+            throw new ArgumentException("SwitchTable requires at least one destination table.", nameof(tables));
+        }
+    }
+
+    public Buffer<TDataType> Decode()
+    {
+        Buffer<TDataType> result = Buffer<TDataType>.Rent(0);
+        foreach (var table in tables)
+        {
+            var decoded = table.Decode();
+            try
+            {
+                result.CopyFrom(decoded.Data!, result.Length, decoded.Length);
+            }
+            finally
+            {
+                decoded.Return();
+            }
+        }
+
+        return result;
+    }
+
+    public void Encode(Buffer<TDataType> data)
+    {
+        var bucketBuffers = new Buffer<TDataType>[tables.Count];
+        try
+        {
+            foreach (var item in data)
+            {
+                int bucket = bucketSelector(item);
+                if (bucket < 0)
+                {
+                    continue;
+                }
+
+                if (bucket >= tables.Count)
+                {
+                    throw new InvalidOperationException($"Bucket selector returned {bucket}, but only {tables.Count} buckets exist.");
+                }
+
+                if (bucketBuffers[bucket].Data == null)
+                {
+                    bucketBuffers[bucket] = Buffer<TDataType>.Rent(4);
+                }
+
+                bucketBuffers[bucket].Add(item);
+            }
+
+            for (int i = 0; i < tables.Count; i++)
+            {
+                if (bucketBuffers[i].Data == null || bucketBuffers[i].Length == 0)
+                {
+                    continue;
+                }
+
+                tables[i].Encode(bucketBuffers[i]);
+            }
+        }
+        finally
+        {
+            for (int i = 0; i < bucketBuffers.Length; i++)
+            {
+                if (bucketBuffers[i].Data != null)
+                {
+                    bucketBuffers[i].Return();
+                }
+            }
+        }
+    }
+
+    public TableState GetState()
+    {
+        foreach (var table in tables)
+        {
+            if (table.GetState() == TableState.Decoding)
+            {
+                return TableState.Decoding;
+            }
+        }
+
+        return TableState.Finished;
+    }
+
+    public void ToDecode()
+    {
+        foreach (var table in tables)
+        {
+            table.ToDecode();
+        }
+    }
+}
+
 public class HashFilterTable<TDataType> : ITable<TDataType>
 {
     private readonly ITable<UlongData> table;
@@ -311,6 +422,59 @@ public class HashFilterTable<TDataType> : ITable<TDataType>
 
     public Buffer<TDataType> Decode()
     {
+        if (!isDecoding)
+        {
+            ToDecode();
+        }
+
+        return Buffer<TDataType>.Rent(0);
+    }
+
+    public void Encode(Buffer<TDataType> data)
+    {
+        Buffer<UlongData> hashdata = Buffer<UlongData>.Rent(Math.Max(1, data.Length));
+        try
+        {
+            foreach (var item in data)
+            {
+                var hashValue = hashFunction.ComputeHash(item);
+                if (isDecoding)
+                {
+                    Toggle(encodedHashes, hashValue);
+                    continue;
+                }
+
+                hashdata.Add(new UlongData(hashValue));
+            }
+
+            if (!isDecoding && hashdata.Length > 0)
+            {
+                table.Encode(hashdata);
+            }
+        }
+        finally
+        {
+            hashdata.Return();
+        }
+    }
+
+    public TableState GetState()
+    {
+        if (encodedHashes.Count > 0)
+        {
+            return TableState.Decoding;
+        }
+        return table.GetState() == TableState.Decoding ? TableState.Decoding : TableState.Finished;
+    }
+
+    public void ToDecode()
+    {
+        if (isDecoding)
+        {
+            return;
+        }
+
+        table.ToDecode();
         isDecoding = true;
         var decodedHashEntries = table.Decode();
         try
@@ -324,34 +488,6 @@ public class HashFilterTable<TDataType> : ITable<TDataType>
         {
             decodedHashEntries.Return();
         }
-        Buffer<TDataType> result = Buffer<TDataType>.Rent(0);
-        return result;
-    }
-
-    public void Encode(Buffer<TDataType> data)
-    {
-
-        Buffer<UlongData> hashdata = Buffer<UlongData>.Rent(data.Length);
-        foreach (var item in data)
-        {
-            var hashValue = hashFunction.ComputeHash(item);
-            if (isDecoding)
-            {
-                Toggle(encodedHashes, hashValue);
-            }
-            else
-                {hashdata.Add(new UlongData(hashValue));continue;}
-        }
-        table.Encode(hashdata);
-    }
-
-    public TableState GetState()
-    {
-        if (encodedHashes.Count > 0)
-        {
-            return TableState.Decoding;
-        }
-        return table.GetState() == TableState.Decoding ? TableState.Decoding : TableState.Finished;
     }
 
     // Mirrors the symmetric-difference reconstruction phase from the HashPredictor experiment.
@@ -475,9 +611,13 @@ public static class IBLTFactory
             var hash = new TabulationHash(i * 12345 + 6789);
             var indexer = new UlongIndexer { HashFunction = hash, Size = tableSize };
             var pureTester = new UlongPureTester { HashFunction = hash, Size = tableSize };
-            //var dict = newtableSize);
-            var dict = new KeyEncodeTable<UlongData, UlongNullDataProvider>(tableSize);
-            tables.Add(new Table<KeyEncodeTable<UlongData, UlongNullDataProvider>, UlongData, int, UlongIndexer, UlongPureTester>(dict, indexer, pureTester));
+            tables.Add(
+                new TableBuilder<UlongData, int>()
+                    .WithSize(tableSize)
+                    .WithNullData(() => new UlongData(0))
+                    .WithIndexer(indexer)
+                    .WithPureTester(pureTester)
+                    .Build());
         }
         return new Tables<UlongData>(tables, new TabuDecodingControl<UlongData>(3, data => data.Value));
     }
@@ -550,9 +690,19 @@ public class Tables<TDataType> : ITable<TDataType>
         return TableState.Finished;
     }
 
+    public void ToDecode()
+    {
+        currentTable = 0;
+        decodingControl.Reset();
+        foreach (var table in tables)
+        {
+            table.ToDecode();
+        }
+    }
+
     public Buffer<TDataType> Decode()
     {
-        decodingControl.Reset();
+        ToDecode();
         Buffer<TDataType> result = Buffer<TDataType>.Rent(0);
         while (decodingControl.Continue())
         {

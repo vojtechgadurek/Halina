@@ -67,16 +67,29 @@ public static class KmerExperiments
 
         var sw = Stopwatch.StartNew();
         // 2. Create Tables
-        // Table 1: Hashes Only. Using tableSize as baseline.
-
         int baseTableSize = allData.Count;
         double magicMultiple1 = 1.3;
-        var hashTable = IBLTFactory.GetStandardIBLT(3, (int)(baseTableSize * magicMultiple1));
-        
-        // Table 2: Sampled 1/k.
+
         double magicMultiple2 = 1.5;
-        int sampledTableSize = Math.Max(100, (int)(baseTableSize / k  * magicMultiple2));
-        var sampledTable = KmerIBLTFactory.CreateKmerIBLT(3, kmerSize, sampledTableSize);
+        int bucketCount = Math.Max(1, Math.Min(3, k));
+        int sampledTableSize = Math.Max(100, (int)(baseTableSize / Math.Max(1, k) * magicMultiple2));
+        var sampledBuckets = new List<ITable<KmerData>>(bucketCount);
+        for (int i = 0; i < bucketCount; i++)
+        {
+            sampledBuckets.Add(KmerIBLTFactory.CreateKmerIBLT(3, kmerSize, sampledTableSize));
+        }
+
+        var predictorPipeline = new TablesBuilder<KmerData>()
+            .AddSwitch(
+                item =>
+                {
+                    int bucket = (int)(item.Hash % (ulong)Math.Max(1, k));
+                    return bucket < bucketCount ? bucket : -1;
+                },
+                sampledBuckets.ToArray())
+            .Add(new HashSetPredictor(kmerSize, (int)(baseTableSize * magicMultiple1), seed))
+            .WithDecodingControl(new TabuDecodingControl<KmerData>(3, data => data.Hash))
+            .Build();
         
         // Table 3: Compressed 1/L.
         double magicMultiple3 = 1;
@@ -84,81 +97,30 @@ public static class KmerExperiments
         var compressedTable = KmerIBLTFactory.CreateKmerIBLT(2, kmerSize, compressedTableSize);
 
         // 3. Encode
-        var hashBuffer = Buffer<UlongData>.Rent(allData.Count);
-        var sampledBuffer = Buffer<KmerData>.Rent(allData.Count);
+        var pipelineBuffer = Buffer<KmerData>.Rent(allData.Count);
         var compressedBuffer = Buffer<KmerData>.Rent(allData.Count);
 
         foreach(var item in allData)
         {
-            hashBuffer.Add(new UlongData(item.Hash));
+            pipelineBuffer.Add(item);
             compressedBuffer.Add(item);
-            
-            if (item.Hash % (ulong)k == 0)
-            {
-                sampledBuffer.Add(item);
-            }
         }
-        Console.WriteLine("Sampled kmers for sampled table: " + sampledBuffer.Length.ToString() + " out of " + allData.Count.ToString());
-        Console.WriteLine($"Expected {allData.Count / k} kmers in sampled table. {k}");
-        hashTable.Encode(hashBuffer);
-        sampledTable.Encode(sampledBuffer);
+        Console.WriteLine($"Routing kmers through {bucketCount} sampled buckets out of modulo {k}.");
+        predictorPipeline.Encode(pipelineBuffer);
         compressedTable.Encode(compressedBuffer);
 
-        // 4. Recover Hashes and Sampled Data
+        // 4. Recover sampled data + guessed kmers from the predictor pipeline.
 
         Console.WriteLine("Decoding tables...");
-        
+        var decodedPipelineBuffer = predictorPipeline.Decode();
+        var reconstructed = new HashSet<KmerData>();
+        foreach (var item in decodedPipelineBuffer)
+        {
+            AddToHashset(reconstructed, item);
+        }
+        decodedPipelineBuffer.Return();
 
-        var decodedSampledBuffer = sampledTable.Decode();
-        var seeds = new HashSet<KmerData>();
-        foreach(var d in decodedSampledBuffer) AddToHashset(seeds, d);
-        decodedSampledBuffer.Return();
-
-        var recoveredHashes = new HashSet<ulong>();
-        
-
-        
-        Console.WriteLine($"Recovered {seeds.Count} sampled kmers from sampled table.");
-
-        // if (maxDistance <= 0)
-        // {
-        //     maxDistance = kmerSize;
-        // }
-        // maxDistance = Math.Min(maxDistance, kmerSize);
-        // int minOverlap = Math.Max(1, maxDistance);
-        // Console.WriteLine($"Running collider with min overlap {minOverlap} (max distance {maxDistance}).");
-
-        // var collider = new Collider(seeds, minOverlap, seed);
-        // var matches = collider.Run();
-        // foreach (var match in matches)
-        // {
-        //     var bridge = collider.GetBridge(match);
-        //     foreach (var item in bridge)
-        //     {
-        //         recoveredHashes.Add(item.Hash);
-        //     }
-        // }
-
-        // if (recoveredHashes.Count > 0)
-        // {
-        //     var additionBuffer = Buffer<UlongData>.Rent(Math.Max(1, recoveredHashes.Count));
-        //     foreach (var value in recoveredHashes)
-        //     {
-        //         additionBuffer.Add(new UlongData(value));
-        //     }
-        //     hashTable.Encode(additionBuffer);
-        //     additionBuffer.Return();
-        //     Console.WriteLine($"Symmetric difference between newly encoded hashes and decoded-after hashes contains {recoveredHashes.Count} hashes.");
-        // }
-        var decodedHashesBuffer = hashTable.Decode();
-        foreach(var d in decodedHashesBuffer) AddToHashset(recoveredHashes, d.Value);
-        decodedHashesBuffer.Return();
-        Console.WriteLine($"Recovered {recoveredHashes.Count} hashes from hash table.");
-
-        var reconstructed = Pump(seeds, recoveredHashes, hasher);
-
-        Console.WriteLine($"Reconstructed {reconstructed.Count} kmers via rolling from seeds.");
-        // 6. Recover remaining from last table
+        Console.WriteLine($"Recovered {reconstructed.Count} kmers from the sampled-switch predictor pipeline.");
 
         var finalSet = new HashSet<KmerData>(reconstructed);
 
@@ -173,7 +135,11 @@ public static class KmerExperiments
 
 
 
-            var newlyReconstructed = Pump(leftoversBuffer.Data.ToHashSet(), recoveredHashes, hasher);
+            var newlyReconstructed = new HashSet<KmerData>();
+            foreach (var leftover in leftoversBuffer)
+            {
+                AddToHashset(newlyReconstructed, leftover);
+            }
 
             foreach(var item in newlyReconstructed) AddToHashset(finalSet, item);
 
@@ -200,8 +166,7 @@ public static class KmerExperiments
         }
         
         // Cleanup
-        hashBuffer.Return();
-        sampledBuffer.Return();
+        pipelineBuffer.Return();
         compressedBuffer.Return();
 
         // Calculate Results
