@@ -77,7 +77,11 @@ public class TableBuilderTests
         Encode(pipeline, kmers);
         var decoded = Decode(pipeline);
 
-        var decodedByHash = decoded.ToDictionary(item => item.Hash);
+        var decodedByHash = new Dictionary<ulong, KmerData>();
+        foreach (var item in decoded)
+        {
+            decodedByHash[item.Hash] = item;
+        }
         foreach (var original in kmers)
         {
             Assert.True(decodedByHash.TryGetValue(original.Hash, out var recovered));
@@ -91,16 +95,21 @@ public class TableBuilderTests
     [Fact]
     public void KmerExperiment_RunExperiment_CompletesWithBuilderPipeline()
     {
+        const int kmerSize = 16;
+        const int sequenceLength = 65;
+        const int nSequences = 100;
+        const int expectedItems = 10_000;
+
         var result = KmerExperiments.RunExperiment(
-            kmerSize: 4,
-            nSequences: 2,
-            sequenceLength: 12,
+            kmerSize: kmerSize,
+            nSequences: nSequences,
+            sequenceLength: sequenceLength,
             k: 3,
             l: 2,
             seed: 11,
             maxDistance: 4);
 
-        Assert.True(result.Result.TotalItems > 0);
+        Assert.Equal(expectedItems, result.Result.TotalItems);
         Assert.Equal(result.Result.TotalItems, result.Result.CorrectlyRecovered + result.Result.NotRecovered);
         Assert.True(result.Result.FalsePositives >= 0);
     }

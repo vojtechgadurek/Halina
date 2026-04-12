@@ -49,6 +49,7 @@ dotnet run --project experiments/Halina.Experiments -- [mode] [config_path]
 1.  **`kmer`**: Runs basic K-mer encoding and decoding experiments to test IBLT capacity and correctness.
 2.  **`mutation`**: Runs experiments focused on identifying mutations between sequences using IBLTs and H-mer hashing.
 3.  **`hashset-extended`**: Runs the "HashSet Predictor" experiment, which attempts to reconstruct a full set of K-mers from a compressed IBLT and a sparse sample by "pumping" seeds.
+4.  **`next-in-line`**: Sweeps memory multipliers for a tabu-decoded K-mer IBLT paired with `NextInPathPredictor`, reporting recovery ratio over recovered `ulong` hashes.
 
 ### Configuration
 
@@ -60,6 +61,24 @@ You can customize parameters such as:
 *   `NSequences`: Number of sequences to generate.
 *   `SequenceLength`: Length of each sequence.
 *   `K`, `L`: Sampling parameters for specific experiments.
+*   `MemoryMultiplier`: For `next-in-line`, the total-table-size multiplier sweep to test.
+*   `StringCount`, `KmersPerString`, `ExperimentsPerStep`: For `next-in-line`, the path count, path length, and number of repeated trials per multiplier.
+
+Example `next-in-line` config:
+```json
+{
+  "Path": "results_next_in_line",
+  "KmerLength": 31,
+  "StringCount": 400,
+  "KmersPerString": 25,
+  "BaseSeed": 123,
+  "ExperimentsPerStep": 100,
+  "PredictorSelectionDivisor": 3,
+  "TabuLimit": 3,
+  "TableCount": { "Start": 2, "End": 3, "Step": 1 },
+  "MemoryMultiplier": { "Start": 0.1, "End": 1.2, "Step": 0.01 }
+}
+```
 
 Example `config.json` (you can use the supplied `experiments/Halina.Experiments/ex_conf_base.json` as a starting point):
 ```json

@@ -47,6 +47,11 @@ public struct KmerData : IHashMetadataData<ulong, KmerMetaData, Kmer>, IXorType<
         return obj is KmerData other &&
                Hash == other.Hash;
     }
+
+    public override int GetHashCode()
+    {
+        return Hash.GetHashCode();
+    }
 }
 
 public interface INullDataProvider<TData>

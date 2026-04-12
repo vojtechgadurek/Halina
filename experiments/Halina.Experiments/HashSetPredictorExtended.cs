@@ -65,10 +65,10 @@ public static class HashSetPredictorExtended
         Console.WriteLine($"Generated {allData.Count} kmers from {nSequences} sequences of length {sequenceLength}.");
 
         int baseTableSize = allData.Count;
-        double hashMagic = 1.5;
+        double hashMagic = 12.0;
         var hashTable = IBLTFactory.GetStandardIBLT(3, (int)(baseTableSize * hashMagic));
 
-        double compressedMagic = 1.3;
+        double compressedMagic = 6.0;
         int compressedTableSize = Math.Max(100, (int)(baseTableSize / Math.Max(1, l) * compressedMagic));
         var compressedTable = KmerIBLTFactory.CreateKmerIBLT(3, kmerSize, compressedTableSize);
 
@@ -91,7 +91,7 @@ public static class HashSetPredictorExtended
         for (int stageIndex = 0; stageIndex < stageCount; stageIndex++)
         {
             int sampleInterval = CalculateSampleInterval(k, shrink, stageIndex);
-            double stageMagic = 1.5;
+            double stageMagic = 9.0;
             int stageTableSize = Math.Max(100, (int)(baseTableSize / Math.Max(1, sampleInterval) * stageMagic));
             var stageTable = KmerIBLTFactory.CreateKmerIBLT(3, kmerSize, stageTableSize);
             samplingStagesInfo.Add(new(stageTable, sampleInterval));

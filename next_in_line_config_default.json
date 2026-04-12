@@ -1,0 +1,22 @@
+{
+  "Path": "results_next_in_line",
+  "KmerLength": 31,
+  "StringCount": 400,
+  "KmersPerString": 25,
+  "BaseSeed": 123,
+  "ExperimentsPerStep": 100,
+  "PredictorSelectionDivisor": 3,
+  "TabuLimit": 3,
+  "TableCount": {
+    "Start": 2,
+    "End": 3,
+    "Step": 1,
+    "Multiplicative": false
+  },
+  "MemoryMultiplier": {
+    "Start": 0.1,
+    "End": 1.2,
+    "Step": 0.01
+  },
+  "SaveIndividualRuns": false
+}

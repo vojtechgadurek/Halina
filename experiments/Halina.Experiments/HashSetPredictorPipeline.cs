@@ -68,9 +68,9 @@ public static class KmerExperiments
         var sw = Stopwatch.StartNew();
         // 2. Create Tables
         int baseTableSize = allData.Count;
-        double magicMultiple1 = 1.3;
+        double magicMultiple1 = 12.0;
 
-        double magicMultiple2 = 1.5;
+        double magicMultiple2 = 9.0;
         int bucketCount = Math.Max(1, Math.Min(3, k));
         int sampledTableSize = Math.Max(100, (int)(baseTableSize / Math.Max(1, k) * magicMultiple2));
         var sampledBuckets = new List<ITable<KmerData>>(bucketCount);
@@ -92,9 +92,9 @@ public static class KmerExperiments
             .Build();
         
         // Table 3: Compressed 1/L.
-        double magicMultiple3 = 1;
+        double magicMultiple3 = 6.0;
         int compressedTableSize = Math.Max(100, (int)(baseTableSize / l * magicMultiple3));
-        var compressedTable = KmerIBLTFactory.CreateKmerIBLT(2, kmerSize, compressedTableSize);
+        var compressedTable = KmerIBLTFactory.CreateKmerIBLT(3, kmerSize, compressedTableSize);
 
         // 3. Encode
         var pipelineBuffer = Buffer<KmerData>.Rent(allData.Count);
